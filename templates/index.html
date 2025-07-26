@@ -2,17 +2,37 @@
 <!DOCTYPE html>
 <html>
 <head>
-    <title>Doctor Schedule (Transposed)</title>
+    <title>Doctor Schedule Generator</title>
     <style>
         body { font-family: Arial, sans-serif; margin: 2em; }
-        table { border-collapse: collapse; width: 100%; }
-        th, td { border: 1px solid #ddd; padding: 0.75em; text-align: center; }
-        th { background-color: #f4f4f4; }
-        h1 { color: #333; }
+        form { margin-bottom: 2em; }
+        label, input, textarea { display: block; margin: 0.5em 0; }
+        input[type="text"], textarea, input[type="number"] {
+            width: 100%; padding: 0.5em;
+        }
+        table { border-collapse: collapse; width: 100%; margin-top: 2em; }
+        th, td { border: 1px solid #ccc; padding: 0.75em; text-align: center; }
+        th { background-color: #f2f2f2; }
+        h1, h2 { color: #333; }
     </style>
 </head>
 <body>
-    <h1>Doctor Schedule</h1>
+    <h1>Doctor Schedule Generator</h1>
+    <form method="POST">
+        <label for="days">Number of Days:</label>
+        <input type="number" name="days" value="{{ default_days }}" min="1" required>
+
+        <label for="services">Services (comma-separated):</label>
+        <input type="text" name="services" value="{{ default_services }}">
+
+        <label for="doctors">Doctors (comma-separated):</label>
+        <input type="text" name="doctors" value="{{ default_doctors }}">
+
+        <button type="submit">Generate Schedule</button>
+    </form>
+
+    {% if schedule_map %}
+    <h2>Generated Schedule</h2>
     <table>
         <thead>
             <tr>
@@ -33,5 +53,6 @@
             {% endfor %}
         </tbody>
     </table>
+    {% endif %}
 </body>
 </html>
