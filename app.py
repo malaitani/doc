@@ -3,6 +3,7 @@ from flask import Flask, render_template, request
 import pandas as pd
 from datetime import datetime, timedelta
 from collections import deque
+import os
 
 app = Flask(__name__)
 
@@ -83,8 +84,6 @@ def index():
 
     return render_template('index.html', schedule=schedule, dates=dates,
                            doctor_input=doctor_input, unavailable_input=unavailable_input)
-
-import os
 
 if __name__ == '__main__':
     port = int(os.environ.get("PORT", 5000))
