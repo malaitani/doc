@@ -1,0 +1,37 @@
+
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Doctor Schedule (Transposed)</title>
+    <style>
+        body { font-family: Arial, sans-serif; margin: 2em; }
+        table { border-collapse: collapse; width: 100%; }
+        th, td { border: 1px solid #ddd; padding: 0.75em; text-align: center; }
+        th { background-color: #f4f4f4; }
+        h1 { color: #333; }
+    </style>
+</head>
+<body>
+    <h1>Doctor Schedule</h1>
+    <table>
+        <thead>
+            <tr>
+                <th>Service</th>
+                {% for day in days %}
+                <th>{{ day }}</th>
+                {% endfor %}
+            </tr>
+        </thead>
+        <tbody>
+            {% for service in services %}
+            <tr>
+                <td>{{ service }}</td>
+                {% for day in days %}
+                <td>{{ schedule_map[day][service] }}</td>
+                {% endfor %}
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+</body>
+</html>
