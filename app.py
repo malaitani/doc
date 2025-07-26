@@ -10,25 +10,19 @@ doctors = ["Dr. Smith", "Dr. Lee", "Dr. Patel", "Dr. Gomez"]
 services = ["CT", "Ultrasound", "MRI", "X-ray"]
 num_days = 5
 
-# Generate random schedule
-def generate_schedule():
+def generate_schedule_map():
     base_date = date.today()
-    schedule = []
-    for i in range(num_days):
-        current_date = base_date + timedelta(days=i)
+    days = [(base_date + timedelta(days=i)).strftime("%Y-%m-%d") for i in range(num_days)]
+    schedule_map = {day: {} for day in days}
+    for day in days:
         for service in services:
-            staff = random.choice(doctors)
-            schedule.append({
-                "date": current_date.strftime("%Y-%m-%d"),
-                "service": service,
-                "staff": staff
-            })
-    return schedule
+            schedule_map[day][service] = random.choice(doctors)
+    return days, services, schedule_map
 
 @app.route('/')
 def index():
-    schedule = generate_schedule()
-    return render_template("index.html", schedule=schedule)
+    days, service_list, schedule_map = generate_schedule_map()
+    return render_template("index.html", days=days, services=service_list, schedule_map=schedule_map)
 
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=10000)
