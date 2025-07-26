@@ -1,117 +1,88 @@
 
 from flask import Flask, render_template, request
-from collections import deque, defaultdict
-import random
-from datetime import date, timedelta
+import pandas as pd
+from datetime import datetime, timedelta
+from collections import deque
 
 app = Flask(__name__)
 
 @app.route('/', methods=['GET', 'POST'])
 def index():
-    default_services = "CT, Ultrasound, MRI, X-ray"
-    default_doctors = "Dr. Smith, Dr. Lee, Dr. Patel, Dr. Gomez"
-    default_days = 5
-    default_unavailable = "\n".join(["" for _ in range(default_days)])
-
-    services = default_services.split(", ")
-    doctors = default_doctors.split(", ")
-    num_days = default_days
-    schedule_map = {}
-    flexible_map = {}
-    unavailable_map = {}
-    flex_count = defaultdict(int)
-    days = []
+    schedule = None
+    dates = None
+    unavailable_input = ""
+    doctor_input = ""
 
     if request.method == 'POST':
-        num_days = int(request.form.get("days", 5))
-        services = [s.strip() for s in request.form.get("services", "").split(",")]
-        doctors = [d.strip() for d in request.form.get("doctors", "").split(",")]
+        doctor_input = request.form['doctors']
+        num_days = int(request.form['num_days'])
+        unavailable_input = request.form['unavailable']
 
-        base_date = date.today()
-        days = []
-        d = base_date
-        while len(days) < num_days:
-            if d.weekday() < 5:
-                label = f"{d.strftime('%Y-%m-%d')} ({d.strftime('%a')[0]})"
-                days.append(label)
-            d += timedelta(days=1)
+        doctor_list = [doc.strip() for doc in doctor_input.splitlines() if doc.strip()]
+        unavailable_by_date = {}
 
-        schedule_map = {day: {} for day in days}
-        flexible_map = {day: [] for day in days}
-        unavailable_map = {day: [] for day in days}
+        if unavailable_input:
+            for line in unavailable_input.splitlines():
+                parts = line.strip().split(":")
+                if len(parts) == 2:
+                    date_str, names = parts
+                    date_str = date_str.strip()
+                    try:
+                        date_obj = datetime.strptime(date_str, "%Y-%m-%d").date()
+                        unavailable_doctors = [name.strip() for name in names.split(",") if name.strip()]
+                        unavailable_by_date[date_obj] = unavailable_doctors
+                    except ValueError:
+                        pass  # skip invalid date format
 
-        unavailable_input = request.form.get("unavailable", "")
-        unavailable_lines = unavailable_input.strip().split("\n")
-        unavailable_by_day = []
-        for line in unavailable_lines:
-            if line.strip():
-                unavailable_by_day.append([d.strip() for d in line.split(",")])
-            else:
-                unavailable_by_day.append([])
+        # Generate list of weekdays only
+        start_date = datetime.today().date()
+        dates = []
+        while len(dates) < num_days:
+            if start_date.weekday() < 5:  # Weekday
+                dates.append(start_date)
+            start_date += timedelta(days=1)
 
-        while len(unavailable_by_day) < num_days:
-            unavailable_by_day.append([])
+        schedule = []
+        doctor_queue = deque(doctor_list)
+        doctor_flexible_days = {doc: 0 for doc in doctor_list}
+        last_assigned = {}
 
-        for i, day in enumerate(days):
-            unavailable_map[day] = unavailable_by_day[i]
+        for date in dates:
+            day_schedule = {'date': f"{date.strftime('%-m/%-d')} ({date.strftime('%a')[0]})"}
+            unavailable_today = unavailable_by_date.get(date, [])
+            assigned_doctor = None
 
-        doctor_queue = deque(doctors)
-
-        for i, day in enumerate(days):
-            assigned = []
-            unavailable_today = set(unavailable_by_day[i])
-            available_today = [d for d in doctors if d not in unavailable_today]
-
-            if not available_today:
-                for service in services:
-                    schedule_map[day][service] = "N/A"
-                flexible_map[day] = []
-                continue
-
-            # Rotate doctor queue until we find a valid cycle
-            doctor_cycle = deque([d for d in doctor_queue if d in available_today])
-            if not doctor_cycle:
-                for service in services:
-                    schedule_map[day][service] = "N/A"
-                flexible_map[day] = []
-                continue
-
-            # Assign doctors in round-robin
-            for service in services:
-                while doctor_cycle:
-                    staff = doctor_cycle.popleft()
-                    if staff not in assigned:
-                        assigned.append(staff)
-                        schedule_map[day][service] = staff
-                        break
+            while doctor_queue:
+                candidate = doctor_queue[0]
+                if candidate in unavailable_today:
+                    break  # keep them in place, try again tomorrow
                 else:
-                    schedule_map[day][service] = "N/A"
+                    assigned_doctor = doctor_queue.popleft()
+                    doctor_queue.append(assigned_doctor)
+                    break
 
-            # Track who is flexible, balance across days
-            unassigned = [d for d in available_today if d not in assigned]
-            if unassigned:
-                min_flex = min(flex_count[d] for d in unassigned)
-                flexible_today = [d for d in unassigned if flex_count[d] == min_flex]
-                flexible_map[day] = flexible_today
-                for d in flexible_today:
-                    flex_count[d] += 1
-            else:
-                flexible_map[day] = []
+            for doc in doctor_list:
+                if doc == assigned_doctor:
+                    day_schedule[doc] = "X"
+                elif doc in unavailable_today:
+                    day_schedule[doc] = "unavailable"
+                else:
+                    day_schedule[doc] = "flexible"
+                    doctor_flexible_days[doc] += 1
 
-            # Rotate main queue
-            doctor_queue.rotate(-1)
+            schedule.append(day_schedule)
 
-    return render_template("index.html",
-        days=days,
-        services=services,
-        schedule_map=schedule_map,
-        flexible_map=flexible_map,
-        unavailable_map=unavailable_map,
-        default_services=default_services,
-        default_doctors=default_doctors,
-        default_days=num_days,
-        default_unavailable=request.form.get("unavailable", default_unavailable)
-    )
+        # Add row to display unavailable doctors
+        unavailable_row = {'date': 'Unavailable'}
+        for doc in doctor_list:
+            days_unavailable = sum(1 for d in dates if doc in unavailable_by_date.get(d, []))
+            unavailable_row[doc] = f"{days_unavailable} day(s)"
+        schedule.append(unavailable_row)
+
+        schedule = pd.DataFrame(schedule)
+
+    return render_template('index.html', schedule=schedule, dates=dates,
+                           doctor_input=doctor_input, unavailable_input=unavailable_input)
 
 if __name__ == '__main__':
-    app.run(host='0.0.0.0', port=10000)
+    app.run(debug=True)
