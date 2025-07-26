@@ -14,6 +14,7 @@
         th, td { border: 1px solid #ccc; padding: 0.75em; text-align: center; }
         th { background-color: #f2f2f2; }
         h1, h2 { color: #333; }
+        .small { font-size: 0.9em; color: #555; }
     </style>
 </head>
 <body>
@@ -27,6 +28,10 @@
 
         <label for="doctors">Doctors (comma-separated):</label>
         <input type="text" name="doctors" value="{{ default_doctors }}">
+
+        <label for="unavailable">Unavailable Doctors Per Day (one line per day):</label>
+        <textarea name="unavailable" rows="{{ default_days }}">{{ default_unavailable }}</textarea>
+        <div class="small">Example:<br>Dr. Smith<br>Dr. Lee, Dr. Patel<br>&lt;blank&gt;</div>
 
         <button type="submit">Generate Schedule</button>
     </form>
@@ -51,6 +56,26 @@
                 {% endfor %}
             </tr>
             {% endfor %}
+            <tr>
+                <th>Flexible</th>
+                {% for day in days %}
+                <td>
+                    {% for doc in flexible_map[day] %}
+                        {{ doc }}<br>
+                    {% endfor %}
+                </td>
+                {% endfor %}
+            </tr>
+            <tr>
+                <th>Unavailable</th>
+                {% for day in days %}
+                <td>
+                    {% for doc in unavailable_map[day] %}
+                        {{ doc }}<br>
+                    {% endfor %}
+                </td>
+                {% endfor %}
+            </tr>
         </tbody>
     </table>
     {% endif %}
