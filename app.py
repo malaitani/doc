@@ -370,8 +370,7 @@ def stage2():
             services=services,
             services_csv=", ".join(services),
             doctors=doctors,
-            doctors_text="
-".join(doctors),
+            doctors_text="\n".join(doctors),
             dates=dates,
             weekday_initials=weekday_initials,
             weekday_index_map=weekday_index_map,
