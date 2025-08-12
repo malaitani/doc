@@ -150,8 +150,8 @@ STAGE2_HTML = """
 <!doctype html>
 <html>
 <head>
-  <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta charset=\"utf-8\" />
+  <meta name=\"viewport\" content=\"width=device-width, initial-scale=1\" />
   <title>Doctor Scheduler v7 — Step 2</title>
   <style>
     body { font-family: system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif; margin: 2rem; }
@@ -168,89 +168,88 @@ STAGE2_HTML = """
 </head>
 <body>
   <h1>Step 2: Unavailability, Service Days & Per-Date Overrides</h1>
-  <p class="muted">1) Pick which <strong>weekdays</strong> each service is staffed. 2) Mark <strong>doctor unavailability</strong>. 3) Optional per-date <strong>service overrides</strong>.</p>
+  <p class=\"muted\">1) Pick which <strong>weekdays</strong> each service is staffed. 2) Mark <strong>doctor unavailability</strong>. 3) Optional per-date <strong>service overrides</strong>.</p>
 
-  <form method="post" action="/generate">
-    <input type="hidden" name="start_date" value="{{start_date}}" />
-    <input type="hidden" name="end_date" value="{{end_date}}" />
-    <input type="hidden" name="services" value="{{services_csv}}" />
-    <textarea name="doctors" style="display:none">{{doctors_text}}</textarea>
+  <form method=\"post\" action=\"/generate\">
+    <input type=\"hidden\" name=\"start_date\" value=\"{{start_date}}\" />
+    <input type=\"hidden\" name=\"end_date\" value=\"{{end_date}}\" />
+    <input type=\"hidden\" name=\"services\" value=\"{{services_csv}}\" />
+    <textarea name=\"doctors\" style=\"display:none\">{{doctors_text}}</textarea>
 
-    <h2 class="left">Service Days</h2>
+    <h2 class=\"left\">Service Days</h2>
     <table>
       <thead>
         <tr>
-          <th class="left">Service</th>
+          <th class=\"left\">Service</th>
           <th>M</th><th>T</th><th>W</th><th>T</th><th>F</th>
         </tr>
       </thead>
       <tbody>
         {% for svc in services %}
         <tr>
-          <td class="left">{{svc}}</td>
+          <td class=\"left\">{{svc}}</td>
           {% for dow in [0,1,2,3,4] %}
-            <td><input type="checkbox" name="sd|{{svc}}|{{dow}}" value="1" {{ 'checked' if svc not in service_days_prefill or dow in service_days_prefill.get(svc, []) else '' }}></td>
+            <td><input type=\"checkbox\" name=\"sd|{{svc}}|{{dow}}\" value=\"1\" {{ 'checked' if svc not in service_days_prefill or dow in service_days_prefill.get(svc, []) else '' }}></td>
           {% endfor %}
         </tr>
         {% endfor %}
       </tbody>
     </table>
 
-    <h2 class="left">Doctor Unavailability</h2>
-    <div class="row">
-      <button class="btn" type="button" onclick="toggleAll(false)">Clear all</button>
-      <button class="btn" type="button" onclick="toggleAll(true)">Select all</button>
+    <h2 class=\"left\">Doctor Unavailability</h2>
+    <div class=\"row\">
+      <button class=\"btn\" type=\"button\" onclick=\"toggleAll(false)\">Clear all</button>
+      <button class=\"btn\" type=\"button\" onclick=\"toggleAll(true)\">Select all</button>
     </div>
 
     <table>
       <thead>
         <tr>
-          <th class="left">Date</th>
+          <th class=\"left\">Date</th>
           {% for doc in doctors %}<th>{{doc}}</th>{% endfor %}
         </tr>
       </thead>
       <tbody>
-        {% for d in dates %}
+        {% for row in date_rows %}
           <tr>
-            <td class="left">{{d}} ({{weekday_initials[loop.index0]}})</td>
+            <td class=\"left\">{{row.d}} ({{row.initial}})</td>
             {% for doc in doctors %}
-              <td><input type="checkbox" name="u|{{doc}}|{{d}}" value="1" {{ 'checked' if (doc,d) in unavail_prefill else '' }}></td>
+              <td><input type=\"checkbox\" name=\"u|{{doc}}|{{row.d}}\" value=\"1\" {{ 'checked' if (doc,row.d) in unavail_prefill else '' }}></td>
             {% endfor %}
           </tr>
         {% endfor %}
       </tbody>
     </table>
 
-    <h2 class="left">Per-Date Service Overrides</h2>
-    <p class="small muted">Checked = service is ON that date. Default follows weekday rules unless overridden here.</p>
+    <h2 class=\"left\">Per-Date Service Overrides</h2>
+    <p class=\"small muted\">Checked = service is ON that date. Default follows weekday rules unless overridden here.</p>
     <table>
       <thead>
         <tr>
-          <th class="left">Date</th>
+          <th class=\"left\">Date</th>
           {% for svc in services %}<th>{{svc}}</th>{% endfor %}
         </tr>
       </thead>
       <tbody>
-        {% for d in dates %}
+        {% for row in date_rows %}
           <tr>
-            <td class="left">{{d}} ({{weekday_initials[loop.index0]}})</td>
+            <td class=\"left\">{{row.d}} ({{row.initial}})</td>
             {% for svc in services %}
-              {% set dow = weekday_index_map[loop.parent.index0] %}
-              {% set default_on = (dow in service_days_prefill.get(svc, [0,1,2,3,4])) %}
-              {% set is_on = date_overrides_prefill.get(d, {}).get(svc, default_on) %}
-              <td><input type="checkbox" name="so|{{d}}|{{svc}}" value="1" {{ 'checked' if is_on else '' }}></td>
+              {% set default_on = (row.dow in service_days_prefill.get(svc, [0,1,2,3,4])) %}
+              {% set is_on = date_overrides_prefill.get(row.d, {}).get(svc, default_on) %}
+              <td><input type=\"checkbox\" name=\"so|{{row.d}}|{{svc}}\" value=\"1\" {{ 'checked' if is_on else '' }}></td>
             {% endfor %}
           </tr>
         {% endfor %}
       </tbody>
     </table>
 
-    <p style="margin-top:1rem;"><button class="btn" type="submit">Generate schedule</button></p>
+    <p style=\"margin-top:1rem;\"><button class=\"btn\" type=\"submit\">Generate schedule</button></p>
   </form>
 
   <script>
     function toggleAll(state){
-      document.querySelectorAll('input[type="checkbox"]').forEach(cb => cb.checked = state);
+      document.querySelectorAll('input[type=\"checkbox\"]').forEach(cb => cb.checked = state);
     }
   </script>
 </body>
@@ -359,9 +358,11 @@ def stage2():
         end = base["end_date"]
         d0 = datetime.strptime(start, "%Y-%m-%d").date()
         d1 = datetime.strptime(end, "%Y-%m-%d").date()
-        dates = [d.strftime("%Y-%m-%d") for d in iter_workdays(d0, d1)]
-        weekday_initials = [WEEKDAY_INITIALS[datetime.strptime(s, "%Y-%m-%d").date().weekday()] for s in dates]
-        weekday_index_map = [datetime.strptime(s, "%Y-%m-%d").date().weekday() for s in dates]
+        date_rows = [{
+            "d": d.strftime("%Y-%m-%d"),
+            "initial": WEEKDAY_INITIALS[d.weekday()],
+            "dow": d.weekday(),
+        } for d in iter_workdays(d0, d1)]
 
         return render_template_string(
             STAGE2_HTML,
@@ -370,10 +371,10 @@ def stage2():
             services=services,
             services_csv=", ".join(services),
             doctors=doctors,
-            doctors_text="\n".join(doctors),
+            doctors_text="
+".join(doctors),
             dates=dates,
-            weekday_initials=weekday_initials,
-            weekday_index_map=weekday_index_map,
+            date_rows=date_rows,
             service_days_prefill=service_days_prefill,
             date_overrides_prefill=date_overrides_prefill,
             unavail_prefill=unavail_prefill_pairs,
