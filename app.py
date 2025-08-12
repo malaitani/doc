@@ -21,11 +21,12 @@ from flask import Flask, request, render_template_string, Response
 app = Flask(__name__)
 
 WEEKDAY_INITIALS = ["M", "T", "W", "T", "F", "S", "S"]
-WEEKDAYS_MON_FRI = [0,1,2,3,4]
+WEEKDAYS_MON_FRI = [0, 1, 2, 3, 4]
 
 # -------------------------- Helpers & Defaults -------------------------- #
 
 def first_monday_after(today: date) -> date:
+    # Monday is 0; choose the first Monday strictly after today
     days_ahead = (7 - today.weekday()) % 7
     if days_ahead == 0:
         days_ahead = 7
@@ -33,6 +34,7 @@ def first_monday_after(today: date) -> date:
 
 
 def week4_friday_from(start_monday: date) -> date:
+    # Friday of week 4 relative to start Monday is +25 days
     return start_monday + timedelta(days=25)
 
 
@@ -95,8 +97,8 @@ STAGE1_HTML = """
 <!doctype html>
 <html>
 <head>
-  <meta charset=\"utf-8\" />
-  <meta name=\"viewport\" content=\"width=device-width, initial-scale=1\" />
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>Doctor Scheduler v7 — Step 1</title>
   <style>
     body { font-family: system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif; margin: 2rem; }
@@ -111,34 +113,34 @@ STAGE1_HTML = """
 </head>
 <body>
   <h1>Step 1: Dates, Services, Doctors</h1>
-  <p class=\"muted\">Defaults use first Monday after today → Friday of week 4. You can also upload a JSON config to prefill.</p>
-  <form method=\"post\" action=\"/stage2\" enctype=\"multipart/form-data\">
-    <div class=\"grid\">
+  <p class="muted">Defaults use first Monday after today → Friday of week 4. You can also upload a JSON config to prefill.</p>
+  <form method="post" action="/stage2" enctype="multipart/form-data">
+    <div class="grid">
       <div>
         <label>Start date</label>
-        <input type=\"date\" name=\"start_date\" value=\"{{start_default}}\" required />
+        <input type="date" name="start_date" value="{{start_default}}" required />
       </div>
       <div>
         <label>End date</label>
-        <input type=\"date\" name=\"end_date\" value=\"{{end_default}}\" required />
+        <input type="date" name="end_date" value="{{end_default}}" required />
       </div>
       <div>
-        <label>Services <span class=\"muted small\">(comma-separated)</span></label>
-        <input type=\"text\" name=\"services\" value=\"x, y, z\" placeholder=\"e.g., CT, US, MR\" required />
+        <label>Services <span class="muted small">(comma-separated)</span></label>
+        <input type="text" name="services" value="x, y, z" placeholder="e.g., CT, US, MR" required />
       </div>
       <div>
-        <label>Doctors <span class=\"muted small\">(one per line)</span></label>
-        <textarea name=\"doctors\" rows=\"6\" placeholder=\"One name per line\" required>A
+        <label>Doctors <span class="muted small">(one per line)</span></label>
+        <textarea name="doctors" rows="6" placeholder="One name per line" required>A
 B
 C</textarea>
       </div>
-      <div style=\"grid-column:1/-1\">
+      <div style="grid-column:1/-1">
         <label>Optional config upload (JSON)</label>
-        <input type=\"file\" name=\"config_file\" accept=\"application/json\" />
-        <p class=\"small muted\">Schema (any keys optional): { start_date, end_date, services[], doctors[], service_days{svc:[0-4]}, date_overrides{YYYY-MM-DD:{svc:boolean}}, unavailable{doctor:[dates]} }</p>
+        <input type="file" name="config_file" accept="application/json" />
+        <p class="small muted">Schema (any keys optional): { start_date, end_date, services[], doctors[], service_days{svc:[0-4]}, date_overrides{YYYY-MM-DD:{svc:boolean}}, unavailable{doctor:[dates]} }</p>
       </div>
     </div>
-    <p><button class=\"btn\" type=\"submit\">Continue → Unavailability, Service Days & Per-Date Overrides</button></p>
+    <p><button class="btn" type="submit">Continue → Unavailability, Service Days & Per-Date Overrides</button></p>
   </form>
 </body>
 </html>
@@ -148,8 +150,8 @@ STAGE2_HTML = """
 <!doctype html>
 <html>
 <head>
-  <meta charset=\"utf-8\" />
-  <meta name=\"viewport\" content=\"width=device-width, initial-scale=1\" />
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>Doctor Scheduler v7 — Step 2</title>
   <style>
     body { font-family: system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif; margin: 2rem; }
@@ -166,84 +168,84 @@ STAGE2_HTML = """
 </head>
 <body>
   <h1>Step 2: Unavailability, Service Days & Per-Date Overrides</h1>
-  <p class=\"muted\">1) Pick which <strong>weekdays</strong> each service is staffed. 2) Mark <strong>doctor unavailability</strong>. 3) Optional per-date <strong>service overrides</strong>.</p>
+  <p class="muted">1) Pick which <strong>weekdays</strong> each service is staffed. 2) Mark <strong>doctor unavailability</strong>. 3) Optional per-date <strong>service overrides</strong>.</p>
 
-  <form method=\"post\" action=\"/generate\">
-    <input type=\"hidden\" name=\"start_date\" value=\"{{start_date}}\" />
-    <input type=\"hidden\" name=\"end_date\" value=\"{{end_date}}\" />
-    <input type=\"hidden\" name=\"services\" value=\"{{services_csv}}\" />
-    <textarea name=\"doctors\" style=\"display:none\">{{doctors_text}}</textarea>
+  <form method="post" action="/generate">
+    <input type="hidden" name="start_date" value="{{start_date}}" />
+    <input type="hidden" name="end_date" value="{{end_date}}" />
+    <input type="hidden" name="services" value="{{services_csv}}" />
+    <textarea name="doctors" style="display:none">{{doctors_text}}</textarea>
 
-    <h2 class=\"left\">Service Days</h2>
+    <h2 class="left">Service Days</h2>
     <table>
       <thead>
         <tr>
-          <th class=\"left\">Service</th>
+          <th class="left">Service</th>
           <th>M</th><th>T</th><th>W</th><th>T</th><th>F</th>
         </tr>
       </thead>
       <tbody>
         {% for svc in services %}
         <tr>
-          <td class=\"left\">{{svc}}</td>
+          <td class="left">{{svc}}</td>
           {% for dow in [0,1,2,3,4] %}
-            <td><input type=\"checkbox\" name=\"sd|{{svc}}|{{dow}}\" value=\"1\" {{ 'checked' if svc not in service_days_prefill or dow in service_days_prefill.get(svc, []) else '' }}></td>
+            <td><input type="checkbox" name="sd|{{svc}}|{{dow}}" value="1" {{ 'checked' if svc not in service_days_prefill or dow in service_days_prefill.get(svc, []) else '' }}></td>
           {% endfor %}
         </tr>
         {% endfor %}
       </tbody>
     </table>
 
-    <h2 class=\"left\">Doctor Unavailability</h2>
-    <div class=\"row\">
-      <button class=\"btn\" type=\"button\" onclick=\"toggleAll(false)\">Clear all</button>
-      <button class=\"btn\" type=\"button\" onclick=\"toggleAll(true)\">Select all</button>
+    <h2 class="left">Doctor Unavailability</h2>
+    <div class="row">
+      <button class="btn" type="button" onclick="toggleAll(false)">Clear all</button>
+      <button class="btn" type="button" onclick="toggleAll(true)">Select all</button>
     </div>
 
     <table>
       <thead>
         <tr>
-          <th class=\"left\">Date</th>
+          <th class="left">Date</th>
           {% for doc in doctors %}<th>{{doc}}</th>{% endfor %}
         </tr>
       </thead>
       <tbody>
         {% for d in dates %}
           <tr>
-            <td class=\"left\">{{d}} ({{weekday_initials[loop.index0]}})</td>
+            <td class="left">{{d}} ({{weekday_initials[loop.index0]}})</td>
             {% for doc in doctors %}
-              <td><input type=\"checkbox\" name=\"u|{{doc}}|{{d}}\" value=\"1\" {{ 'checked' if (doc,d) in unavail_prefill else '' }}></td>
+              <td><input type="checkbox" name="u|{{doc}}|{{d}}" value="1" {{ 'checked' if (doc,d) in unavail_prefill else '' }}></td>
             {% endfor %}
           </tr>
         {% endfor %}
       </tbody>
     </table>
 
-    <h2 class=\"left\">Per-Date Service Overrides</h2>
-    <p class=\"small muted\">Checked = service is ON that date. Default follows weekday rules unless overridden here.</p>
+    <h2 class="left">Per-Date Service Overrides</h2>
+    <p class="small muted">Checked = service is ON that date. Default follows weekday rules unless overridden here.</p>
     <table>
       <thead>
         <tr>
-          <th class=\"left\">Date</th>
+          <th class="left">Date</th>
           {% for svc in services %}<th>{{svc}}</th>{% endfor %}
         </tr>
       </thead>
       <tbody>
         {% for d in dates %}
           <tr>
-            <td class=\"left\">{{d}} ({{weekday_initials[loop.index0]}})</td>
+            <td class="left">{{d}} ({{weekday_initials[loop.index0]}})</td>
             {% for svc in services %}
-              {% set dow = weekday_index_map[loop.parent.loop.index0] %}
+              {% set dow = weekday_index_map[loop.parent.index0] %}
               {% set default_on = (dow in service_days_prefill.get(svc, [0,1,2,3,4])) %}
               {% set is_on = date_overrides_prefill.get(d, {}).get(svc, default_on) %}
-              <td><input type=\"checkbox\" name=\"so|{{d}}|{{svc}}\" value=\"1\" {{ 'checked' if is_on else '' }}></td>
+              <td><input type="checkbox" name="so|{{d}}|{{svc}}" value="1" {{ 'checked' if is_on else '' }}></td>
             {% endfor %}
           </tr>
         {% endfor %}
       </tbody>
     </table>
 
-    <p style=\"margin-top:1rem;\"><button class=\"btn\" type=\"submit\">Generate schedule</button></p>
+    <p style="margin-top:1rem;"><button class="btn" type="submit">Generate schedule</button></p>
   </form>
 
   <script>
@@ -259,8 +261,8 @@ RESULTS_HTML = """
 <!doctype html>
 <html>
 <head>
-  <meta charset=\"utf-8\" />
-  <meta name=\"viewport\" content=\"width=device-width, initial-scale=1\" />
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>Schedule</title>
   <style>
     body { font-family: system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif; margin: 2rem; }
@@ -269,12 +271,13 @@ RESULTS_HTML = """
     th { background: #fafafa; }
     .pill { display:inline-block; padding:.2rem .5rem; border-radius:999px; background:#f0f0f0; margin:.1rem; }
     .unfilled { color:#b00020; font-weight:600; }
+    .muted { color:#666; }
     .btn { padding: .6rem 1rem; border:1px solid #ddd; border-radius:10px; background:white; text-decoration:none; }
   </style>
 </head>
 <body>
   <h1>Schedule</h1>
-  <p><a class=\"btn\" href=\"/\">↩︎ Start over</a></p>
+  <p><a class="btn" href="/">↩︎ Start over</a></p>
   <table>
     <thead>
       <tr>
@@ -289,10 +292,10 @@ RESULTS_HTML = """
           <td>{{row.date_label}}</td>
           {% for svc in services %}
             {% set val = row.get(svc, '') %}
-            <td>{% if val == 'UNFILLED' %}<span class=\"unfilled\">UNFILLED</span>{% elif val == 'OFF' %}<span class=\"muted\">—</span>{% else %}{{val}}{% endif %}</td>
+            <td>{% if val == 'UNFILLED' %}<span class="unfilled">UNFILLED</span>{% elif val == 'OFF' %}<span class="muted">—</span>{% else %}{{val}}{% endif %}</td>
           {% endfor %}
           <td>
-            {% for name in row.Flexible %}<span class=\"pill\">{{name}}</span>{% endfor %}
+            {% for name in row.Flexible %}<span class="pill">{{name}}</span>{% endfor %}
           </td>
         </tr>
       {% endfor %}
@@ -448,6 +451,7 @@ def generate():
                 if not candidates:
                     assigned_today[svc] = "UNFILLED"
                     continue
+                # Prefer those with more flexible days so far; tie-break by rotation order
                 candidates.sort(key=lambda t: (-flex_counts[t[0]], t[1]))
                 chosen = candidates[0][0]
                 assigned_today[svc] = chosen
