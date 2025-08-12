@@ -1,33 +1,39 @@
 """
-Doctor Scheduler v4 — single-file Flask app
-Two-stage input flow:
-  1) Dates + services + doctors
-  2) Doctor unavailability (checkbox grid by date)
-Console & Render ready
+Doctor Scheduler v6 — single-file Flask app
+Two-stage input + smart defaults + service day controls
+
+New in v6:
+  • Step 2 lets you pick which WEEKDAYS each service is staffed (Mon–Fri).
+  • Services default to Mon–Fri (you can uncheck, e.g., MR only M/W/F).
+  • Defaults updated: services → "x, y, z"; doctors → "A, B, C".
+  • Start defaults to first Monday AFTER today; end defaults to Friday of week 4.
+Console & Render ready.
 """
 from __future__ import annotations
 from dataclasses import dataclass
 from collections import deque
 from datetime import date, timedelta, datetime
 from typing import List, Dict, Any, Tuple
-import json
 import os
-import html
-
 from flask import Flask, request, render_template_string, Response
 
 app = Flask(__name__)
 
 WEEKDAY_INITIALS = ["M", "T", "W", "T", "F", "S", "S"]
+WEEKDAYS_MON_FRI = [0,1,2,3,4]
 
-# -------------------------- Models & Parsing -------------------------- #
-@dataclass
-class ScheduleConfig:
-    start_date: date
-    end_date: date
-    services: List[str]
-    doctors: List[str]
-    unavailable: Dict[str, set]
+# -------------------------- Helpers & Defaults -------------------------- #
+
+def first_monday_after(today: date) -> date:
+    days_ahead = (7 - today.weekday()) % 7
+    if days_ahead == 0:
+        days_ahead = 7
+    return today + timedelta(days=days_ahead)
+
+
+def week4_friday_from(start_monday: date) -> date:
+    return start_monday + timedelta(days=25)
+
 
 def iter_workdays(start: date, end: date):
     cur = start
@@ -36,11 +42,23 @@ def iter_workdays(start: date, end: date):
             yield cur
         cur += timedelta(days=1)
 
+
 def weekday_initial(d: date) -> str:
     return WEEKDAY_INITIALS[d.weekday()]
 
+# -------------------------- Models & Parsing -------------------------- #
+
+@dataclass
+class ScheduleConfig:
+    start_date: date
+    end_date: date
+    services: List[str]
+    doctors: List[str]
+    unavailable: Dict[str, set]
+    service_days: Dict[str, set]  # e.g., {"CT": {0,2,4}} means CT staffed Mon/Wed/Fri
+
+
 def parse_basic(payload: Dict[str, Any]) -> Dict[str, Any]:
-    """Parse stage-1 payload (start/end, services, doctors)."""
     start = datetime.strptime(payload["start_date"], "%Y-%m-%d").date()
     end = datetime.strptime(payload["end_date"], "%Y-%m-%d").date()
     if end < start:
@@ -58,6 +76,7 @@ def parse_basic(payload: Dict[str, Any]) -> Dict[str, Any]:
         "doctors": doctors,
     }
 
+
 def parse_config(full: Dict[str, Any]) -> ScheduleConfig:
     base = parse_basic(full)
     start = datetime.strptime(base["start_date"], "%Y-%m-%d").date()
@@ -65,23 +84,31 @@ def parse_config(full: Dict[str, Any]) -> ScheduleConfig:
     services = base["services"]
     doctors = base["doctors"]
     unavailable = {d: set(full.get("unavailable", {}).get(d, [])) for d in doctors}
-    return ScheduleConfig(start, end, services, doctors, unavailable)
+    # service_days may be missing; default Mon–Fri for all services
+    sd_in = full.get("service_days", {}) or {}
+    service_days: Dict[str, set] = {svc: set(sd_in.get(svc, WEEKDAYS_MON_FRI)) for svc in services}
+    return ScheduleConfig(start, end, services, doctors, unavailable, service_days)
 
 # -------------------------- Engine -------------------------- #
 
 def generate_schedule(cfg: ScheduleConfig) -> Tuple[List[Dict[str, Any]], Dict[str, int]]:
-    from collections import defaultdict
     rotations: Dict[str, deque] = {svc: deque(cfg.doctors) for svc in cfg.services}
     flexible_counts: Dict[str, int] = {d: 0 for d in cfg.doctors}
     rows: List[Dict[str, Any]] = []
 
     for day in iter_workdays(cfg.start_date, cfg.end_date):
         day_str = day.strftime("%Y-%m-%d")
+        dow = day.weekday()
         available_today = {d for d in cfg.doctors if day_str not in cfg.unavailable.get(d, set())}
         assigned_today: Dict[str, str] = {}
         used_doctors = set()
 
         for svc in cfg.services:
+            # Skip if this service is not staffed on this weekday
+            if dow not in cfg.service_days.get(svc, WEEKDAYS_MON_FRI):
+                assigned_today[svc] = "OFF"
+                continue
+
             rot = rotations[svc]
             candidates = [(doc, idx) for idx, doc in enumerate(rot) if doc in available_today and doc not in used_doctors]
             if not candidates:
@@ -96,6 +123,7 @@ def generate_schedule(cfg: ScheduleConfig) -> Tuple[List[Dict[str, Any]], Dict[s
                 rot.rotate(-1)
             rot.rotate(-1)
 
+        # Flexible doctors are those available but not used (services marked OFF do not consume doctors)
         flexible_today = sorted(list(available_today - used_doctors))
         for doc in flexible_today:
             flexible_counts[doc] += 1
@@ -115,7 +143,7 @@ STAGE1_HTML = """
 <head>
   <meta charset=\"utf-8\" />
   <meta name=\"viewport\" content=\"width=device-width, initial-scale=1\" />
-  <title>Doctor Scheduler v4 — Step 1</title>
+  <title>Doctor Scheduler v6 — Step 1</title>
   <style>
     body { font-family: system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif; margin: 2rem; }
     .grid { display: grid; grid-template-columns: repeat(auto-fit,minmax(260px,1fr)); gap: 1rem; }
@@ -129,27 +157,27 @@ STAGE1_HTML = """
 </head>
 <body>
   <h1>Step 1: Dates, Services, Doctors</h1>
-  <p class=\"muted\">Next step you'll mark specific *unavailable* dates per doctor.</p>
+  <p class=\"muted\">Defaults use first Monday after today → Friday of week 4.</p>
   <form method=\"post\" action=\"/stage2\">
     <div class=\"grid\">
       <div>
         <label>Start date</label>
-        <input type=\"date\" name=\"start_date\" value=\"2025-06-30\" required />
+        <input type=\"date\" name=\"start_date\" value=\"{{start_default}}\" required />
       </div>
       <div>
         <label>End date</label>
-        <input type=\"date\" name=\"end_date\" value=\"2025-07-11\" required />
+        <input type=\"date\" name=\"end_date\" value=\"{{end_default}}\" required />
       </div>
       <div>
         <label>Services <span class=\"muted small\">(comma-separated)</span></label>
-        <input type=\"text\" name=\"services\" value=\"CT, US\" placeholder=\"e.g., CT, US, MR\" required />
+        <input type=\"text\" name=\"services\" value=\"x, y, z\" placeholder=\"e.g., CT, US, MR\" required />
       </div>
       <div>
         <label>Doctors <span class=\"muted small\">(one per line)</span></label>
-        <textarea name=\"doctors\" rows=\"6\" placeholder=\"One name per line\" required>Alice\nBob\nCarol\nDan</textarea>
+        <textarea name=\"doctors\" rows=\"6\" placeholder=\"One name per line\" required>A\nB\nC</textarea>
       </div>
     </div>
-    <p><button class=\"btn\" type=\"submit\">Continue → Unavailability</button></p>
+    <p><button class=\"btn\" type=\"submit\">Continue → Unavailability & Service Days</button></p>
   </form>
 </body>
 </html>
@@ -161,7 +189,7 @@ STAGE2_HTML = """
 <head>
   <meta charset=\"utf-8\" />
   <meta name=\"viewport\" content=\"width=device-width, initial-scale=1\" />
-  <title>Doctor Scheduler v4 — Step 2</title>
+  <title>Doctor Scheduler v6 — Step 2</title>
   <style>
     body { font-family: system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif; margin: 2rem; }
     table { border-collapse: collapse; width: 100%; margin-top: 1rem; }
@@ -170,21 +198,41 @@ STAGE2_HTML = """
     .btn { padding: .6rem 1rem; border:1px solid #ddd; border-radius:10px; background:white; cursor:pointer; }
     .btn:hover { background:#f5f5f5; }
     .muted { color:#666; }
-    .pill { display:inline-block; padding:.2rem .5rem; border-radius:999px; background:#f0f0f0; margin:.1rem; }
     .row { display:flex; gap:.6rem; align-items:center; flex-wrap:wrap; }
+    .left { text-align:left; }
   </style>
 </head>
 <body>
-  <h1>Step 2: Mark Unavailability</h1>
-  <p class=\"muted\">Check the boxes where a doctor is <strong>unavailable</strong>. Only weekdays between {{start_date}} and {{end_date}} are shown.</p>
+  <h1>Step 2: Unavailability & Service Days</h1>
+  <p class=\"muted\">1) Pick which <strong>weekdays</strong> each service is staffed. 2) Mark <strong>doctor unavailability</strong> by date.</p>
 
   <form method=\"post\" action=\"/generate\">
-    <!-- carry stage-1 data forward -->
     <input type=\"hidden\" name=\"start_date\" value=\"{{start_date}}\" />
     <input type=\"hidden\" name=\"end_date\" value=\"{{end_date}}\" />
     <input type=\"hidden\" name=\"services\" value=\"{{services_csv}}\" />
     <textarea name=\"doctors\" style=\"display:none\">{{doctors_text}}</textarea>
 
+    <h2 class=\"left\">Service Days</h2>
+    <table>
+      <thead>
+        <tr>
+          <th class=\"left\">Service</th>
+          <th>M</th><th>T</th><th>W</th><th>T</th><th>F</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for svc in services %}
+        <tr>
+          <td class=\"left\">{{svc}}</td>
+          {% for dow in [0,1,2,3,4] %}
+            <td><input type=\"checkbox\" name=\"sd|{{svc}}|{{dow}}\" value=\"1\" checked></td>
+          {% endfor %}
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+
+    <h2 class=\"left\">Doctor Unavailability</h2>
     <div class=\"row\">
       <button class=\"btn\" type=\"button\" onclick=\"toggleAll(false)\">Clear all</button>
       <button class=\"btn\" type=\"button\" onclick=\"toggleAll(true)\">Select all</button>
@@ -193,16 +241,15 @@ STAGE2_HTML = """
     <table>
       <thead>
         <tr>
-          <th style=\"text-align:left\">Date</th>
+          <th class=\"left\">Date</th>
           {% for doc in doctors %}<th>{{doc}}</th>{% endfor %}
         </tr>
       </thead>
       <tbody>
         {% for d in dates %}
           <tr>
-            <td style=\"text-align:left\">{{d}} ({{weekday_initials[loop.index0]}})</td>
+            <td class=\"left\">{{d}} ({{weekday_initials[loop.index0]}})</td>
             {% for doc in doctors %}
-              {# name pattern: u|{{doc}}|{{d}} -> value '1' when checked #}
               <td><input type=\"checkbox\" name=\"u|{{doc}}|{{d}}\" value=\"1\"></td>
             {% endfor %}
           </tr>
@@ -256,7 +303,7 @@ RESULTS_HTML = """
           <td>{{row.date_label}}</td>
           {% for svc in services %}
             {% set val = row.get(svc, '') %}
-            <td>{% if val == 'UNFILLED' %}<span class=\"unfilled\">UNFILLED</span>{% else %}{{val}}{% endif %}</td>
+            <td>{% if val == 'UNFILLED' %}<span class=\"unfilled\">UNFILLED</span>{% elif val == 'OFF' %}<span class=\"muted\">—</span>{% else %}{{val}}{% endif %}</td>
           {% endfor %}
           <td>
             {% for name in row.Flexible %}<span class=\"pill\">{{name}}</span>{% endfor %}
@@ -273,7 +320,14 @@ RESULTS_HTML = """
 
 @app.route("/", methods=["GET"])
 def stage1():
-    return render_template_string(STAGE1_HTML)
+    today = date.today()
+    start_def = first_monday_after(today)
+    end_def = week4_friday_from(start_def)
+    return render_template_string(
+        STAGE1_HTML,
+        start_default=start_def.strftime("%Y-%m-%d"),
+        end_default=end_def.strftime("%Y-%m-%d"),
+    )
 
 @app.route("/stage2", methods=["POST"])
 def stage2():
@@ -289,7 +343,6 @@ def stage2():
         base = parse_basic(payload)
         start = base["start_date"]
         end = base["end_date"]
-        # build weekday list for display initials
         d0 = datetime.strptime(start, "%Y-%m-%d").date()
         d1 = datetime.strptime(end, "%Y-%m-%d").date()
         dates = [d.strftime("%Y-%m-%d") for d in iter_workdays(d0, d1)]
@@ -299,6 +352,7 @@ def stage2():
             STAGE2_HTML,
             start_date=start,
             end_date=end,
+            services=services,
             services_csv=", ".join(services),
             doctors=doctors,
             doctors_text="\n".join(doctors),
@@ -311,25 +365,38 @@ def stage2():
 @app.route("/generate", methods=["POST"])
 def generate():
     try:
-        # reconstruct full payload from stage2 form
         start_date = request.form.get("start_date", "").strip()
         end_date = request.form.get("end_date", "").strip()
         services = [s.strip() for s in request.form.get("services", "").split(",") if s.strip()]
         doctors = [d.strip() for d in request.form.get("doctors", "").splitlines() if d.strip()]
+        # Parse service weekday selections
+        service_days: Dict[str, List[int]] = {svc: [] for svc in services}
+        for key, val in request.form.items():
+            if key.startswith("sd|") and val == "1":
+                _, svc, dow = key.split("|", 2)
+                if svc in service_days:
+                    try:
+                        service_days[svc].append(int(dow))
+                    except ValueError:
+                        pass
+        # Default to Mon–Fri if none selected for a service
+        service_days = {svc: (set(v) if v else set(WEEKDAYS_MON_FRI)) for svc, v in service_days.items()}
+
+        # Parse doctor unavailability
         unavailable: Dict[str, List[str]] = {d: [] for d in doctors}
         for key, val in request.form.items():
-            if not key.startswith("u|"):
-                continue
-            # key pattern: u|Doctor|YYYY-MM-DD ; value '1' if checked
-            _, doc, datestr = key.split("|", 2)
-            if val == "1" and doc in unavailable:
-                unavailable[doc].append(datestr)
+            if key.startswith("u|") and val == "1":
+                _, doc, datestr = key.split("|", 2)
+                if doc in unavailable:
+                    unavailable[doc].append(datestr)
+
         full = {
             "start_date": start_date,
             "end_date": end_date,
             "services": services,
             "doctors": doctors,
             "unavailable": unavailable,
+            "service_days": service_days,
         }
         cfg = parse_config(full)
         rows, _ = generate_schedule(cfg)
