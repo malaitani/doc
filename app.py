@@ -1,12 +1,12 @@
 """
-Doctor Scheduler v6 — single-file Flask app
-Two-stage input + smart defaults + service day controls
+Doctor Scheduler v7 — single-file Flask app
+Two-stage input + smart defaults + service day controls + per-date overrides + config upload
 
-New in v6:
-  • Step 2 lets you pick which WEEKDAYS each service is staffed (Mon–Fri).
-  • Services default to Mon–Fri (you can uncheck, e.g., MR only M/W/F).
-  • Defaults updated: services → "x, y, z"; doctors → "A, B, C".
-  • Start defaults to first Monday AFTER today; end defaults to Friday of week 4.
+New in v7:
+  • Step 2 adds a per-date × per-service ON/OFF grid to override weekday rules.
+  • Step 1 accepts an optional Config JSON upload to prefill dates/services/doctors and rules.
+  • Services default to Mon–Fri; you can uncheck days or override specific dates.
+  • Defaults: services → "x, y, z"; doctors → "A, B, C".
 Console & Render ready.
 """
 from __future__ import annotations
@@ -15,6 +15,7 @@ from collections import deque
 from datetime import date, timedelta, datetime
 from typing import List, Dict, Any, Tuple
 import os
+import json
 from flask import Flask, request, render_template_string, Response
 
 app = Flask(__name__)
@@ -55,7 +56,7 @@ class ScheduleConfig:
     services: List[str]
     doctors: List[str]
     unavailable: Dict[str, set]
-    service_days: Dict[str, set]  # e.g., {"CT": {0,2,4}} means CT staffed Mon/Wed/Fri
+    service_days: Dict[str, set]  # {svc: {0..4}}
 
 
 def parse_basic(payload: Dict[str, Any]) -> Dict[str, Any]:
@@ -84,56 +85,9 @@ def parse_config(full: Dict[str, Any]) -> ScheduleConfig:
     services = base["services"]
     doctors = base["doctors"]
     unavailable = {d: set(full.get("unavailable", {}).get(d, [])) for d in doctors}
-    # service_days may be missing; default Mon–Fri for all services
     sd_in = full.get("service_days", {}) or {}
     service_days: Dict[str, set] = {svc: set(sd_in.get(svc, WEEKDAYS_MON_FRI)) for svc in services}
     return ScheduleConfig(start, end, services, doctors, unavailable, service_days)
-
-# -------------------------- Engine -------------------------- #
-
-def generate_schedule(cfg: ScheduleConfig) -> Tuple[List[Dict[str, Any]], Dict[str, int]]:
-    rotations: Dict[str, deque] = {svc: deque(cfg.doctors) for svc in cfg.services}
-    flexible_counts: Dict[str, int] = {d: 0 for d in cfg.doctors}
-    rows: List[Dict[str, Any]] = []
-
-    for day in iter_workdays(cfg.start_date, cfg.end_date):
-        day_str = day.strftime("%Y-%m-%d")
-        dow = day.weekday()
-        available_today = {d for d in cfg.doctors if day_str not in cfg.unavailable.get(d, set())}
-        assigned_today: Dict[str, str] = {}
-        used_doctors = set()
-
-        for svc in cfg.services:
-            # Skip if this service is not staffed on this weekday
-            if dow not in cfg.service_days.get(svc, WEEKDAYS_MON_FRI):
-                assigned_today[svc] = "OFF"
-                continue
-
-            rot = rotations[svc]
-            candidates = [(doc, idx) for idx, doc in enumerate(rot) if doc in available_today and doc not in used_doctors]
-            if not candidates:
-                assigned_today[svc] = "UNFILLED"
-                continue
-            # Prefer those with more flexible days so far; tie-break by rotation position
-            candidates.sort(key=lambda t: (-flexible_counts[t[0]], t[1]))
-            chosen = candidates[0][0]
-            assigned_today[svc] = chosen
-            used_doctors.add(chosen)
-            while rot[0] != chosen:
-                rot.rotate(-1)
-            rot.rotate(-1)
-
-        # Flexible doctors are those available but not used (services marked OFF do not consume doctors)
-        flexible_today = sorted(list(available_today - used_doctors))
-        for doc in flexible_today:
-            flexible_counts[doc] += 1
-
-        row = {"date": day_str, "date_label": f"{day_str} ({weekday_initial(day)})"}
-        row.update(assigned_today)
-        row["Flexible"] = flexible_today
-        rows.append(row)
-
-    return rows, flexible_counts
 
 # -------------------------- Templates -------------------------- #
 
@@ -143,7 +97,7 @@ STAGE1_HTML = """
 <head>
   <meta charset=\"utf-8\" />
   <meta name=\"viewport\" content=\"width=device-width, initial-scale=1\" />
-  <title>Doctor Scheduler v6 — Step 1</title>
+  <title>Doctor Scheduler v7 — Step 1</title>
   <style>
     body { font-family: system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif; margin: 2rem; }
     .grid { display: grid; grid-template-columns: repeat(auto-fit,minmax(260px,1fr)); gap: 1rem; }
@@ -157,8 +111,8 @@ STAGE1_HTML = """
 </head>
 <body>
   <h1>Step 1: Dates, Services, Doctors</h1>
-  <p class=\"muted\">Defaults use first Monday after today → Friday of week 4.</p>
-  <form method=\"post\" action=\"/stage2\">
+  <p class=\"muted\">Defaults use first Monday after today → Friday of week 4. You can also upload a JSON config to prefill.</p>
+  <form method=\"post\" action=\"/stage2\" enctype=\"multipart/form-data\">
     <div class=\"grid\">
       <div>
         <label>Start date</label>
@@ -174,10 +128,17 @@ STAGE1_HTML = """
       </div>
       <div>
         <label>Doctors <span class=\"muted small\">(one per line)</span></label>
-        <textarea name=\"doctors\" rows=\"6\" placeholder=\"One name per line\" required>A\nB\nC</textarea>
+        <textarea name=\"doctors\" rows=\"6\" placeholder=\"One name per line\" required>A
+B
+C</textarea>
+      </div>
+      <div style=\"grid-column:1/-1\">
+        <label>Optional config upload (JSON)</label>
+        <input type=\"file\" name=\"config_file\" accept=\"application/json\" />
+        <p class=\"small muted\">Schema (any keys optional): { start_date, end_date, services[], doctors[], service_days{svc:[0-4]}, date_overrides{YYYY-MM-DD:{svc:boolean}}, unavailable{doctor:[dates]} }</p>
       </div>
     </div>
-    <p><button class=\"btn\" type=\"submit\">Continue → Unavailability & Service Days</button></p>
+    <p><button class=\"btn\" type=\"submit\">Continue → Unavailability, Service Days & Per-Date Overrides</button></p>
   </form>
 </body>
 </html>
@@ -189,7 +150,7 @@ STAGE2_HTML = """
 <head>
   <meta charset=\"utf-8\" />
   <meta name=\"viewport\" content=\"width=device-width, initial-scale=1\" />
-  <title>Doctor Scheduler v6 — Step 2</title>
+  <title>Doctor Scheduler v7 — Step 2</title>
   <style>
     body { font-family: system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif; margin: 2rem; }
     table { border-collapse: collapse; width: 100%; margin-top: 1rem; }
@@ -200,11 +161,12 @@ STAGE2_HTML = """
     .muted { color:#666; }
     .row { display:flex; gap:.6rem; align-items:center; flex-wrap:wrap; }
     .left { text-align:left; }
+    .small { font-size:.9rem; }
   </style>
 </head>
 <body>
-  <h1>Step 2: Unavailability & Service Days</h1>
-  <p class=\"muted\">1) Pick which <strong>weekdays</strong> each service is staffed. 2) Mark <strong>doctor unavailability</strong> by date.</p>
+  <h1>Step 2: Unavailability, Service Days & Per-Date Overrides</h1>
+  <p class=\"muted\">1) Pick which <strong>weekdays</strong> each service is staffed. 2) Mark <strong>doctor unavailability</strong>. 3) Optional per-date <strong>service overrides</strong>.</p>
 
   <form method=\"post\" action=\"/generate\">
     <input type=\"hidden\" name=\"start_date\" value=\"{{start_date}}\" />
@@ -225,7 +187,7 @@ STAGE2_HTML = """
         <tr>
           <td class=\"left\">{{svc}}</td>
           {% for dow in [0,1,2,3,4] %}
-            <td><input type=\"checkbox\" name=\"sd|{{svc}}|{{dow}}\" value=\"1\" checked></td>
+            <td><input type=\"checkbox\" name=\"sd|{{svc}}|{{dow}}\" value=\"1\" {{ 'checked' if svc not in service_days_prefill or dow in service_days_prefill.get(svc, []) else '' }}></td>
           {% endfor %}
         </tr>
         {% endfor %}
@@ -250,7 +212,31 @@ STAGE2_HTML = """
           <tr>
             <td class=\"left\">{{d}} ({{weekday_initials[loop.index0]}})</td>
             {% for doc in doctors %}
-              <td><input type=\"checkbox\" name=\"u|{{doc}}|{{d}}\" value=\"1\"></td>
+              <td><input type=\"checkbox\" name=\"u|{{doc}}|{{d}}\" value=\"1\" {{ 'checked' if (doc,d) in unavail_prefill else '' }}></td>
+            {% endfor %}
+          </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+
+    <h2 class=\"left\">Per-Date Service Overrides</h2>
+    <p class=\"small muted\">Checked = service is ON that date. Default follows weekday rules unless overridden here.</p>
+    <table>
+      <thead>
+        <tr>
+          <th class=\"left\">Date</th>
+          {% for svc in services %}<th>{{svc}}</th>{% endfor %}
+        </tr>
+      </thead>
+      <tbody>
+        {% for d in dates %}
+          <tr>
+            <td class=\"left\">{{d}} ({{weekday_initials[loop.index0]}})</td>
+            {% for svc in services %}
+              {% set dow = weekday_index_map[loop.parent.loop.index0] %}
+              {% set default_on = (dow in service_days_prefill.get(svc, [0,1,2,3,4])) %}
+              {% set is_on = date_overrides_prefill.get(d, {}).get(svc, default_on) %}
+              <td><input type=\"checkbox\" name=\"so|{{d}}|{{svc}}\" value=\"1\" {{ 'checked' if is_on else '' }}></td>
             {% endfor %}
           </tr>
         {% endfor %}
@@ -332,11 +318,36 @@ def stage1():
 @app.route("/stage2", methods=["POST"])
 def stage2():
     try:
-        services = [s.strip() for s in (request.form.get("services", "").split(",")) if s.strip()]
-        doctors = [d.strip() for d in request.form.get("doctors", "").splitlines() if d.strip()]
+        # Pull basic fields
+        start_in = request.form.get("start_date", "").strip()
+        end_in = request.form.get("end_date", "").strip()
+        services_in = [s.strip() for s in (request.form.get("services", "").split(",")) if s.strip()]
+        doctors_in = [d.strip() for d in request.form.get("doctors", "").splitlines() if d.strip()]
+
+        # Optional config upload (JSON)
+        cfg_file = request.files.get("config_file")
+        pre = {}
+        if cfg_file and cfg_file.filename:
+            try:
+                pre = json.load(cfg_file.stream)
+            except Exception:
+                pre = {}
+
+        # Merge uploaded config with form (form wins if both provided)
+        start = start_in or pre.get("start_date", "")
+        end = end_in or pre.get("end_date", "")
+        services = services_in or pre.get("services", [])
+        doctors = doctors_in or pre.get("doctors", [])
+        service_days_prefill = pre.get("service_days", {})  # {svc: [0..4]}
+        date_overrides_prefill = pre.get("date_overrides", {})  # {"YYYY-MM-DD": {svc: bool}}
+        unavail_prefill_pairs = set()
+        for doc, dates in (pre.get("unavailable", {}) or {}).items():
+            for d in dates:
+                unavail_prefill_pairs.add((doc, d))
+
         payload = {
-            "start_date": request.form.get("start_date", "").strip(),
-            "end_date": request.form.get("end_date", "").strip(),
+            "start_date": start,
+            "end_date": end,
             "services": services,
             "doctors": doctors,
         }
@@ -347,6 +358,7 @@ def stage2():
         d1 = datetime.strptime(end, "%Y-%m-%d").date()
         dates = [d.strftime("%Y-%m-%d") for d in iter_workdays(d0, d1)]
         weekday_initials = [WEEKDAY_INITIALS[datetime.strptime(s, "%Y-%m-%d").date().weekday()] for s in dates]
+        weekday_index_map = [datetime.strptime(s, "%Y-%m-%d").date().weekday() for s in dates]
 
         return render_template_string(
             STAGE2_HTML,
@@ -355,9 +367,14 @@ def stage2():
             services=services,
             services_csv=", ".join(services),
             doctors=doctors,
-            doctors_text="\n".join(doctors),
+            doctors_text="
+".join(doctors),
             dates=dates,
             weekday_initials=weekday_initials,
+            weekday_index_map=weekday_index_map,
+            service_days_prefill=service_days_prefill,
+            date_overrides_prefill=date_overrides_prefill,
+            unavail_prefill=unavail_prefill_pairs,
         )
     except Exception as e:
         return Response(f"Error: {e}", status=400)
@@ -369,6 +386,7 @@ def generate():
         end_date = request.form.get("end_date", "").strip()
         services = [s.strip() for s in request.form.get("services", "").split(",") if s.strip()]
         doctors = [d.strip() for d in request.form.get("doctors", "").splitlines() if d.strip()]
+
         # Parse service weekday selections
         service_days: Dict[str, List[int]] = {svc: [] for svc in services}
         for key, val in request.form.items():
@@ -379,7 +397,6 @@ def generate():
                         service_days[svc].append(int(dow))
                     except ValueError:
                         pass
-        # Default to Mon–Fri if none selected for a service
         service_days = {svc: (set(v) if v else set(WEEKDAYS_MON_FRI)) for svc, v in service_days.items()}
 
         # Parse doctor unavailability
@@ -390,6 +407,14 @@ def generate():
                 if doc in unavailable:
                     unavailable[doc].append(datestr)
 
+        # Parse per-date service overrides (so|DATE|SVC) checked = ON
+        date_overrides: Dict[str, Dict[str, bool]] = {}
+        for key, val in request.form.items():
+            if key.startswith("so|"):
+                _, d, svc = key.split("|", 2)
+                date_overrides.setdefault(d, {})[svc] = (val == "1")
+
+        # Build base config
         full = {
             "start_date": start_date,
             "end_date": end_date,
@@ -399,8 +424,48 @@ def generate():
             "service_days": service_days,
         }
         cfg = parse_config(full)
-        rows, _ = generate_schedule(cfg)
-        return render_template_string(RESULTS_HTML, rows=rows, services=cfg.services)
+
+        # Generate with overrides
+        rows: List[Dict[str, Any]] = []
+        flex_counts: Dict[str, int] = {d: 0 for d in doctors}
+        rotations: Dict[str, deque] = {svc: deque(doctors) for svc in services}
+
+        for day in iter_workdays(cfg.start_date, cfg.end_date):
+            day_str = day.strftime("%Y-%m-%d")
+            dow = day.weekday()
+            available_today = {d for d in cfg.doctors if day_str not in cfg.unavailable.get(d, set())}
+            used_doctors = set()
+            assigned_today: Dict[str, str] = {}
+
+            for svc in services:
+                default_on = dow in cfg.service_days.get(svc, WEEKDAYS_MON_FRI)
+                on = date_overrides.get(day_str, {}).get(svc, default_on)
+                if not on:
+                    assigned_today[svc] = "OFF"
+                    continue
+                rot = rotations[svc]
+                candidates = [(doc, idx) for idx, doc in enumerate(rot) if doc in available_today and doc not in used_doctors]
+                if not candidates:
+                    assigned_today[svc] = "UNFILLED"
+                    continue
+                candidates.sort(key=lambda t: (-flex_counts[t[0]], t[1]))
+                chosen = candidates[0][0]
+                assigned_today[svc] = chosen
+                used_doctors.add(chosen)
+                while rot[0] != chosen:
+                    rot.rotate(-1)
+                rot.rotate(-1)
+
+            flexible_today = sorted(list(available_today - used_doctors))
+            for doc in flexible_today:
+                flex_counts[doc] += 1
+
+            row = {"date": day_str, "date_label": f"{day_str} ({weekday_initial(day)})"}
+            row.update(assigned_today)
+            row["Flexible"] = flexible_today
+            rows.append(row)
+
+        return render_template_string(RESULTS_HTML, rows=rows, services=services)
     except Exception as e:
         return Response(f"Error: {e}", status=400)
 
